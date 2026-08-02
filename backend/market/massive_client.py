@@ -85,7 +85,15 @@ class MassiveMarketDataSource(MarketDataSource):
     async def _run_loop(self) -> None:
         while True:
             if self._tracked:
-                await self._poll_once()
+                try:
+                    await self._poll_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Last-resort safety net: fail soft, log loud (MARKET_DATA_DESIGN.md §1).
+                    # _poll_once already handles the known Massive failure modes below; this
+                    # guards against anything unanticipated so the loop can never die silently.
+                    logger.exception("Unexpected error during Massive poll for %s; will retry next interval", sorted(self._tracked))
             await asyncio.sleep(self._poll_interval)
 
     async def _poll_once(self) -> None:
@@ -98,9 +106,20 @@ class MassiveMarketDataSource(MarketDataSource):
         except httpx.HTTPError as exc:
             self._log_error(f"Massive request failed for {tickers}: {exc}")
             return
+        except ValueError as exc:
+            # resp.json() raises this (json.JSONDecodeError) on a non-JSON body.
+            self._log_error(f"Massive response was not valid JSON for {tickers}: {exc}")
+            return
+
+        try:
+            parsed = parse_snapshot(payload)
+        except (KeyError, TypeError) as exc:
+            # A ticker item present but missing an expected field (e.g. no lastTrade
+            # for a halted stock) — degrade like any other Massive failure mode.
+            self._log_error(f"Massive snapshot payload malformed for {tickers}: {exc}")
+            return
 
         self._consecutive_errors = 0
-        parsed = parse_snapshot(payload)
         missing = set(tickers) - parsed.keys()
         if missing:
             logger.warning("Massive snapshot returned no data for: %s", sorted(missing))

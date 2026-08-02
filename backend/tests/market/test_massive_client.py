@@ -189,6 +189,87 @@ class TestMassiveMarketDataSource:
         assert await cache.get("AAPL") is None
 
     @pytest.mark.asyncio
+    async def test_malformed_ticker_item_is_caught_and_does_not_raise(self):
+        cache = PriceCache()
+        source = MassiveMarketDataSource(cache, api_key="test-key", poll_interval=60)
+        source.set_tracked_tickers({"AAPL"})
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            # e.g. a halted stock with no last trade — item present but missing "lastTrade"
+            return httpx.Response(200, json=make_snapshot_response([{"ticker": "AAPL"}]))
+
+        source._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        await source._poll_once()  # must not raise
+        await source._client.aclose()
+
+        assert await cache.get("AAPL") is None
+
+    @pytest.mark.asyncio
+    async def test_malformed_payload_does_not_wipe_cache_or_reset_error_count(self):
+        cache = PriceCache()
+        source = MassiveMarketDataSource(cache, api_key="test-key", poll_interval=60)
+        source.set_tracked_tickers({"AAPL"})
+
+        responses = [
+            httpx.Response(200, json=make_snapshot_response([make_ticker_item("AAPL", 190.0, 180.0)])),
+            httpx.Response(200, json=make_snapshot_response([{"ticker": "AAPL"}])),
+        ]
+        call_count = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            resp = responses[call_count["n"]]
+            call_count["n"] += 1
+            return resp
+
+        source._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        await source._poll_once()
+        await source._poll_once()  # malformed payload must not wipe the cache
+        await source._client.aclose()
+
+        tick = await cache.get("AAPL")
+        assert tick.price == 190.0
+
+    @pytest.mark.asyncio
+    async def test_non_json_response_is_caught_and_does_not_raise(self):
+        cache = PriceCache()
+        source = MassiveMarketDataSource(cache, api_key="test-key", poll_interval=60)
+        source.set_tracked_tickers({"AAPL"})
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text="not json")
+
+        source._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        await source._poll_once()  # must not raise
+        await source._client.aclose()
+
+        assert await cache.get("AAPL") is None
+
+    @pytest.mark.asyncio
+    async def test_run_loop_survives_unexpected_exception_in_poll_once(self):
+        # Simulates a bug in _poll_once that isn't one of its handled exception
+        # types — the loop itself must still never die silently (MARKET_DATA_DESIGN.md §1).
+        cache = PriceCache()
+        source = MassiveMarketDataSource(cache, api_key="test-key", poll_interval=0.01)
+        source.set_tracked_tickers({"AAPL"})
+
+        call_count = {"n": 0}
+
+        async def failing_poll_once():
+            call_count["n"] += 1
+            raise RuntimeError("boom")
+
+        source._poll_once = failing_poll_once
+        source._task = asyncio.create_task(source._run_loop())
+        await asyncio.sleep(0.05)
+        source._task.cancel()
+        try:
+            await source._task
+        except asyncio.CancelledError:
+            pass
+
+        assert call_count["n"] >= 2  # loop kept retrying instead of dying after the first error
+
+    @pytest.mark.asyncio
     async def test_missing_ticker_in_response_does_not_crash(self):
         cache = PriceCache()
         source = MassiveMarketDataSource(cache, api_key="test-key", poll_interval=60)
