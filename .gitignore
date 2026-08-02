@@ -1,0 +1,22 @@
+# Secrets
+.env
+
+# Runtime SQLite database (see planning/PLAN.md §4/§7 — volume-mounted, not committed)
+data/*.db
+data/*.db-journal
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+
+# OS
+.DS_Store
+Thumbs.db
