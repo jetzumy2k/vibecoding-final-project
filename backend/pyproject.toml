@@ -7,6 +7,11 @@ dependencies = [
     "httpx>=0.27",
 ]
 
+[project.optional-dependencies]
+demo = [
+    "rich>=15.0.0",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

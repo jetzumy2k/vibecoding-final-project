@@ -55,3 +55,13 @@ data/        SQLite database volume mount
 - Backend unit tests: `pytest` (within `backend/`)
 - Frontend unit tests: within `frontend/`
 - E2E tests: Playwright, run via `test/docker-compose.test.yml` against a deterministic build (`LLM_MOCK=true`, fixed `MARKET_SIM_SEED`)
+
+## Market Simulator Demo
+
+A standalone Rich terminal dashboard for watching the market simulator run live — all 10 default tickers, sparklines, color-coded direction arrows, and a notable-move event log:
+
+```bash
+# run from the repo root (backend must be importable as a package)
+uv run --project backend --extra demo python -m backend.scripts.demo_terminal          # 60s, or Ctrl+C to stop early
+uv run --project backend --extra demo python -m backend.scripts.demo_terminal --duration 30 --seed 42
+```
